@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="only light">
+<meta name="darkreader-lock">
 <title>Éditeur PDF</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,7 +20,7 @@
   --accent:#e4572e; --accent-2:#c9461f; --focus:#2f6fde;
   --ui:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  color-scheme: light;
+  color-scheme: only light;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -236,7 +238,7 @@ body[data-tool="select"] .ann.whiteout:hover:not(.selected){outline:1px dashed #
 'use strict';
 const pdfjsLib = window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
-const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = PDFLib;
+const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = PDFLib;
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -443,7 +445,7 @@ function annBox(a) {
   const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
   ctx.font = `${a.bold ? 700 : 400} ${a.size}px ${FONTS[a.font].css}`;
   const lines = (a.text || ' ').split('\n');
-  return { w: Math.max(6, ...lines.map(l => ctx.measureText(l).width)), h: lines.length * a.size * 1.2 };
+  return { w: Math.max(6, ...lines.map(l => ctx.measureText(l).width)) * (a.hscale || 1), h: lines.length * a.size * 1.2 };
 }
 const pathD = pts => pts.length === 1 ? `M${pts[0][0]} ${pts[0][1]}l.01 0` : pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(2) + ' ' + q[1].toFixed(2)).join('');
 
@@ -456,6 +458,7 @@ function renderOverlay(p) {
     if (a.type === 'text') {
       n = el('div', 'ann text'); n.textContent = a.text;
       Object.assign(n.style, { fontSize: a.size * s + 'px', color: a.color, fontFamily: FONTS[a.font].css, fontWeight: a.bold ? 700 : 400 });
+      if (a.hscale && a.hscale !== 1) { n.style.transform = `scaleX(${a.hscale})`; n.style.transformOrigin = '0 0'; }
     } else if (a.type === 'pen') {
       n = el('div', 'ann pen', `<svg viewBox="0 0 ${Math.max(a.w, .01)} ${Math.max(a.h, .01)}" preserveAspectRatio="none"><path d="${pathD(a.pts)}" fill="none" stroke="${a.color}" stroke-width="${a.stroke}" stroke-linecap="round" stroke-linejoin="round" vector-effect="none"/></svg>`);
       n.style.width = Math.max(a.w, .01) * s + 'px'; n.style.height = Math.max(a.h, .01) * s + 'px';
@@ -464,6 +467,7 @@ function renderOverlay(p) {
       n = el('div', 'ann image'); const im = new Image(); im.src = S.images[a.img]; im.alt = ''; im.draggable = false; n.append(im);
     } else {
       n = el('div', 'ann ' + a.type);
+      if (a.type === 'whiteout' && a.fill) n.style.background = a.fill;
       if (a.type === 'highlight') n.style.background = a.color;
       if (a.type === 'rect') { n.style.borderColor = a.color; n.style.borderWidth = a.stroke * s + 'px'; }
     }
@@ -611,7 +615,8 @@ function stopEditing() {
   const { p, a } = locate(id); if (!a) return;
   const n = overlayOf(p.id)?.querySelector(`.ann[data-id="${id}"]`);
   if (n) a.text = readText(n);
-  if (!a.text.trim()) { p.annots = p.annots.filter(x => x !== a); if (S.selected === id) S.selected = null; }
+  if (a.cover && a.text === a.orig) { p.annots = p.annots.filter(x => x !== a && x.id !== a.cover); if (S.selected === id) S.selected = null; }
+  else if (!a.text.trim()) { p.annots = p.annots.filter(x => x !== a); if (S.selected === id) S.selected = null; }
   renderOverlay(p); renderOptions();
 }
 
@@ -660,6 +665,7 @@ function renderOptions() {
   } else if (type === 'highlight') {
     h += swatchGroup(HL_COLORS, a ? a.color : S.hl, 'data-hl');
   }
+  if (a && a.cover) h += `<button class="obtn" id="optRestore">Remettre le texte d’origine</button>`;
   if (a) h += `<button class="obtn danger" id="optDel">Supprimer l’élément</button>`;
   const hint = a ? (a.type === 'text' ? 'Double-clic pour modifier le texte · Suppr pour effacer' : 'Glisse pour déplacer · poignée pour redimensionner · Suppr pour effacer') : HINTS[S.tool];
   if (!S.pages.length) h = `<span class="hint">Ouvre un PDF pour commencer.</span>`; else h += `<span class="hint">${hint}</span>`;
@@ -685,6 +691,11 @@ optbar.addEventListener('click', e => {
   if (c) { S.color = c.dataset.color; applyOpt(a => { if (a.type !== 'highlight' && a.type !== 'whiteout' && a.type !== 'image') a.color = S.color; }); }
   else if (hl) { S.hl = hl.dataset.hl; applyOpt(a => { if (a.type === 'highlight') a.color = S.hl; }); }
   else if (e.target.closest('#optBold')) { S.bold = !(selAnn() ? selAnn().bold : S.bold); applyOpt(a => { if (a.type === 'text') a.bold = S.bold; }); }
+  else if (e.target.closest('#optRestore')) {
+    const a = selAnn() || (S.editing && locate(S.editing).a); if (!a) return;
+    const { p } = locate(a.id); S.editing = null; pushHistory();
+    p.annots = p.annots.filter(x => x !== a && x.id !== a.cover); S.selected = null; renderOverlay(p); renderOptions(); toast('Texte d’origine remis');
+  }
   else if (e.target.closest('#optDel')) { if (S.editing) { const id = S.editing; S.editing = null; S.selected = id; } deleteSelected(); }
 });
 optbar.addEventListener('change', e => {
@@ -730,7 +741,7 @@ function textBoxes(p) {
       const st = tc.styles[it.fontName] || {};
       let asc = st.ascent, desc = st.descent;
       if (!asc || asc <= 0 || asc > 1.3) asc = .8; if (desc == null || desc > 0 || desc < -.6) desc = -.2;
-      out.push({ x: t[4], y: t[5] - fh * asc, w: it.width, h: fh * (asc - desc), base: t[5], size: fh, str: it.str, family: st.fontFamily || '' });
+      out.push({ x: t[4], y: t[5] - fh * asc, w: it.width, h: fh * (asc - desc), base: t[5], size: fh, str: it.str, family: st.fontFamily || '', fontName: it.fontName });
     }
     return out;
   })();
@@ -741,17 +752,56 @@ function hitBox(boxes, pt) {
   for (const b of boxes) if (pt.x >= b.x - 2 && pt.x <= b.x + b.w + 2 && pt.y >= b.y - 2 && pt.y <= b.y + b.h + 2 && b.w * b.h < area) { best = b; area = b.w * b.h; }
   return best;
 }
+function sampleColors(p, b) {
+  const c = sheetOf(p.id)?.querySelector('canvas'); if (!c || !c.width) return null;
+  const k = c.width / dims(p).W;
+  const x0 = Math.max(0, Math.floor(b.x * k)), y0 = Math.max(0, Math.floor(b.y * k));
+  const x1 = Math.min(c.width, Math.ceil((b.x + b.w) * k)), y1 = Math.min(c.height, Math.ceil((b.y + b.h) * k));
+  const W = x1 - x0, H = y1 - y0; if (W < 3 || H < 3) return null;
+  let d; try { d = c.getContext('2d').getImageData(x0, y0, W, H).data; } catch (e) { return null; }
+  const counts = new Map();
+  const add = i => { const key = (d[i] >> 3) + ',' + (d[i + 1] >> 3) + ',' + (d[i + 2] >> 3); const v = counts.get(key) || [0, 0, 0, 0]; v[0]++; v[1] += d[i]; v[2] += d[i + 1]; v[3] += d[i + 2]; counts.set(key, v); };
+  for (let x = 0; x < W; x++) { add(x * 4); add(((H - 1) * W + x) * 4); }
+  for (let y = 0; y < H; y++) { add(y * W * 4); add((y * W + W - 1) * 4); }
+  let best = null; for (const v of counts.values()) if (!best || v[0] > best[0]) best = v;
+  const bg = [best[1] / best[0], best[2] / best[0], best[3] / best[0]];
+  const dist = i => Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]);
+  let maxd = 0; for (let i = 0; i < d.length; i += 4) maxd = Math.max(maxd, dist(i));
+  let n = 0, r = 0, g = 0, bl = 0;
+  for (let i = 0; i < d.length; i += 4) if (dist(i) >= maxd * .82) { n++; r += d[i]; g += d[i + 1]; bl += d[i + 2]; }
+  const hex = v => '#' + v.map(x => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
+  return { bg: hex(bg), fg: n && maxd > 60 ? hex([r / n, g / n, bl / n]) : '#111111' };
+}
 async function replaceText(p, pt) {
   const b = hitBox(await textBoxes(p), pt);
   if (!b) { toast('Aucun texte modifiable ici. Utilise l’outil Texte pour en ajouter.'); return; }
+  // font of the original: name, bold
+  let fname = '', bold = false;
+  try {
+    const pg = await S.sources[p.src].doc.getPage(p.idx + 1);
+    if (pg.commonObjs.has(b.fontName)) {
+      const fo = pg.commonObjs.get(b.fontName);
+      fname = (fo.name || '') + ' ' + (fo.fallbackName || '');
+      bold = !!(fo.bold || fo.black) || /bold|black|heavy|semibold|demi/i.test(fo.name || '');
+    }
+  } catch (e) { }
+  const nm = (fname + ' ' + b.family).toLowerCase();
+  const font = /courier|mono|consol|menlo/.test(nm) ? 'Courier'
+    : /times|serif|garamond|georgia|cambria|minion|palatino|book/.test(nm.replace(/sans-serif|sans/g, '')) ? 'Times' : 'Helvetica';
+  const col = sampleColors(p, b) || { bg: '#ffffff', fg: '#111111' };
+  const size = Math.round(b.size * 10) / 10;
+  // horizontal scale so the text keeps the width of the original
+  const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
+  ctx.font = `${bold ? 700 : 400} ${size}px ${FONTS[font].css}`;
+  const mw = ctx.measureText(b.str).width;
+  let hscale = mw > 0 ? b.w / mw : 1;
+  hscale = Math.abs(hscale - 1) < .03 ? 1 : Math.max(.8, Math.min(1.25, hscale));
   pushHistory();
   const pad = Math.max(1, b.size * .12);
-  const fam = b.family.toLowerCase();
-  const font = /mono/.test(fam) ? 'Courier' : (/serif/.test(fam) && !/sans/.test(fam)) ? 'Times' : 'Helvetica';
-  const size = Math.round(b.size * 10) / 10;
-  const wo = { id: uid(), type: 'whiteout', x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
-  const ta = { id: uid(), type: 'text', x: b.x, y: b.base - FONTS[font].base * size, text: b.str, size, color: '#111111', font, bold: false };
+  const wo = { id: uid(), type: 'whiteout', x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2, fill: col.bg };
+  const ta = { id: uid(), type: 'text', x: b.x, y: b.base - FONTS[font].base * size, text: b.str, orig: b.str, cover: wo.id, size, color: col.fg, font, bold, hscale };
   p.annots.push(wo, ta);
+  S.color = col.fg; S.bold = bold; S.font = font; S.size = size;
   pagesEl.querySelectorAll('.hover-box').forEach(h => h.style.display = 'none');
   startEditing(ta.id, true, false);
 }
@@ -996,11 +1046,18 @@ async function buildPdf() {
     for (const a of p.annots) {
       if (a.type === 'text') {
         const F = FONTS[a.font], font = await getFont(a.bold ? F.bold : F.reg);
+        const hs = a.hscale || 1;
+        if (hs !== 1) {
+          const o = M(a.x, a.y + F.base * a.size), th = R * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th);
+          const A11 = c * c * hs + sn * sn, A12 = c * sn * (hs - 1), A22 = sn * sn * hs + c * c;
+          page.pushOperators(pushGraphicsState(), concatTransformationMatrix(A11, A12, A12, A22, o.x - (A11 * o.x + A12 * o.y), o.y - (A12 * o.x + A22 * o.y)));
+        }
         a.text.split('\n').forEach((ln, i) => {
           ln = ln.replace(/\t/g, '    '); if (!ln.trim()) return;
           const o = M(a.x, a.y + i * a.size * 1.2 + F.base * a.size);
           page.drawText(safeText(font, ln), { x: o.x, y: o.y, size: a.size, font, color: hexRgb(a.color), rotate: rot });
         });
+        if (hs !== 1) page.pushOperators(popGraphicsState());
       } else if (a.type === 'image') {
         const d = S.images[a.img];
         const im = imgs[a.img] || (imgs[a.img] = d.startsWith('data:image/jpeg') ? await out.embedJpg(b64(d)) : await out.embedPng(b64(d)));
@@ -1020,7 +1077,7 @@ async function buildPdf() {
         page.drawRectangle({ x: o.x, y: o.y, width: a.w, height: a.h, color: hexRgb(a.color), opacity: .4, blendMode: BlendMode.Multiply, rotate: rot });
       } else if (a.type === 'whiteout') {
         const o = M(a.x, a.y + a.h);
-        page.drawRectangle({ x: o.x, y: o.y, width: a.w, height: a.h, color: rgb(1, 1, 1), rotate: rot });
+        page.drawRectangle({ x: o.x, y: o.y, width: a.w, height: a.h, color: hexRgb(a.fill || '#ffffff'), rotate: rot });
       }
     }
   }

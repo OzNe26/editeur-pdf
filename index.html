@@ -49,7 +49,7 @@ button:focus-visible,select:focus-visible,input:focus-visible,.thumb:focus-visib
 .optbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;min-height:46px;padding:6px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
 .optgroup{display:flex;align-items:center;gap:6px}
 .optgroup label{font-size:12px;color:var(--muted)}
-.optbar select{height:30px;border:1px solid var(--line);border-radius:6px;background:#fff;padding:0 6px;color:var(--text)}
+.optbar select{max-width:190px;height:30px;border:1px solid var(--line);border-radius:6px;background:#fff;padding:0 6px;color:var(--text)}
 .swatch{width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--line);cursor:pointer;padding:0}
 .swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--text)}
 .custom-color{width:26px;height:26px;border:0;padding:0;background:none;cursor:pointer}
@@ -238,7 +238,9 @@ body[data-tool="select"] .ann.whiteout:hover:not(.selected){outline:1px dashed #
 'use strict';
 const pdfjsLib = window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
-const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = PDFLib;
+const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle, pushGraphicsState, popGraphicsState, concatTransformationMatrix,
+  PDFDict, PDFName, PDFHexString, beginText, endText, setFontAndSize, showText, setTextMatrix, setFillingRgbColor,
+  setCharacterSpacing, setWordSpacing, setCharacterSqueeze, setTextRise, setTextRenderingMode, TextRenderingMode } = PDFLib;
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -270,10 +272,21 @@ document.querySelectorAll('[data-icon]').forEach(b => b.insertAdjacentHTML('afte
 
 /* ---------- state ---------- */
 const FONTS = {
-  Helvetica:{label:'Helvetica', css:'Arial, "Liberation Sans", Helvetica, sans-serif', base:.947, reg:'Helvetica', bold:'HelveticaBold'},
-  Times:{label:'Times', css:'"Times New Roman", "Liberation Serif", Times, serif', base:.937, reg:'TimesRoman', bold:'TimesRomanBold'},
-  Courier:{label:'Courier', css:'"Courier New", "Liberation Mono", Courier, monospace', base:.867, reg:'Courier', bold:'CourierBold'}
+  Helvetica:{label:'Helvetica', css:'Arial, "Liberation Sans", Helvetica, sans-serif', reg:'Helvetica', bold:'HelveticaBold'},
+  Times:{label:'Times', css:'"Times New Roman", "Liberation Serif", Times, serif', reg:'TimesRoman', bold:'TimesRomanBold'},
+  Courier:{label:'Courier', css:'"Courier New", "Liberation Mono", Courier, monospace', reg:'Courier', bold:'CourierBold'},
+  LiberationSans:{label:'Arial (Liberation Sans)', file:'LiberationSans-Regular', boldFile:'LiberationSans-Bold', generic:'sans-serif'},
+  LiberationSerif:{label:'Times New Roman (Liberation Serif)', file:'LiberationSerif-Regular', boldFile:'LiberationSerif-Bold', generic:'serif'},
+  LiberationMono:{label:'Courier New (Liberation Mono)', file:'LiberationMono-Regular', boldFile:'LiberationMono-Bold', generic:'monospace'},
+  Carlito:{label:'Calibri (Carlito)', file:'Carlito-Regular', boldFile:'Carlito-Bold', generic:'sans-serif'},
+  Caladea:{label:'Cambria (Caladea)', file:'Caladea-Regular', boldFile:'Caladea-Bold', generic:'serif'},
+  DejaVuSans:{label:'DejaVu Sans', file:'DejaVuSans', boldFile:'DejaVuSans-Bold', generic:'sans-serif'},
+  DejaVuSerif:{label:'DejaVu Serif', file:'DejaVuSerif', boldFile:'DejaVuSerif-Bold', generic:'serif'},
+  DejaVuSansMono:{label:'DejaVu Sans Mono', file:'DejaVuSansMono', boldFile:'DejaVuSansMono-Bold', generic:'monospace'}
 };
+for (const k in FONTS) if (FONTS[k].file) FONTS[k].css = `"EP-${k}", ${FONTS[k].generic}`;
+const REF = .9; // a text's y is its first baseline minus REF × size
+const PF = {};  // fonts embedded in the opened PDFs, by pdf.js id
 const COLORS = ['#111111','#1d3fb8','#d62828','#157f3b'];
 const HL_COLORS = ['#ffd400','#7ee07e','#ff8fc7','#7cc7ff'];
 const S = {
@@ -315,7 +328,7 @@ function redo() { if (S.editing) stopEditing(); if (!S.future.length) return; S.
 async function addPdfBytes(bytes, name, replace) {
   let doc;
   try {
-    doc = await pdfjsLib.getDocument({ data: bytes.slice(), cMapUrl: 'lib/cmaps/', cMapPacked: true, standardFontDataUrl: 'lib/standard_fonts/' }).promise;
+    doc = await pdfjsLib.getDocument({ data: bytes.slice(), cMapUrl: 'lib/cmaps/', cMapPacked: true, standardFontDataUrl: 'lib/standard_fonts/', fontExtraProperties: true }).promise;
   } catch (err) {
     toast(err && err.name === 'PasswordException' ? `« ${name} » est protégé par un mot de passe : retire la protection puis réessaie.` : `Impossible de lire « ${name} ». Le fichier est peut-être abîmé.`);
     return false;
@@ -440,25 +453,86 @@ async function renderCanvas(id) {
   } catch (e) { /* rendu annulé */ }
 }
 
+/* fonts: bundled files load on demand */
+const fontLoads = {};
+function ensureFont(key, bold) {
+  const F = FONTS[key]; if (!F || !F.file) return Promise.resolve();
+  const id = key + (bold ? 'B' : '');
+  if (!fontLoads[id]) {
+    const face = new FontFace('EP-' + key, `url(fonts/${bold ? F.boldFile : F.file}.ttf)`, { weight: bold ? '700' : '400' });
+    fontLoads[id] = face.load().then(ff => { document.fonts.add(ff); boffCache = {}; renderAllOverlays(); }).catch(() => { });
+  }
+  return fontLoads[id];
+}
+let boffCache = {};
+function boff(css, weight) {
+  const k = css + '|' + weight; if (boffCache[k]) return boffCache[k];
+  const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
+  ctx.font = `${weight} 100px ${css}`;
+  const m = ctx.measureText('Hg');
+  const A = m.fontBoundingBoxAscent, D = m.fontBoundingBoxDescent;
+  return boffCache[k] = (A && D != null) ? ((120 - (A + D)) / 2 + A) / 100 : .93;
+}
+const displayable = c => c >= 0x20 && !(c >= 0x7f && c <= 0x9f) && c !== 0xad;
+// codes of the text in the PDF's own font, or null if a letter is missing
+function pfCodes(a) {
+  const P = a.pf && PF[a.pf]; if (!P) return null;
+  const lines = [];
+  for (const ln of a.text.split('\n')) {
+    const codes = [];
+    for (const ch of ln.replace(/\t/g, '    ')) { const c = P.inv.get(ch); if (c === undefined) return null; codes.push(c); }
+    lines.push(codes);
+  }
+  return lines;
+}
+function missingInPf(a) {
+  const P = a.pf && PF[a.pf]; if (!P) return [];
+  return [...new Set([...a.text.replace(/\n/g, '')].filter(ch => !P.inv.has(ch)))];
+}
+// how a text annotation is drawn on screen: original font, bundled font, or standard font
+function textLook(a) {
+  const P = a.pf && PF[a.pf];
+  if (P && P.face && S.editing !== a.id) {
+    const codes = pfCodes(a);
+    if (codes) {
+      const fc = codes.map(l => l.map(c => P.fc[c] != null ? P.fc[c] : c));
+      if (fc.every(l => l.every(displayable))) {
+        const css = `"${P.css}", ${FONTS[a.font].css}`;
+        return { css, weight: 400, str: fc.map(l => String.fromCodePoint(...l)).join('\n'), hs: 1, off: boff(css, 400) };
+      }
+    }
+  }
+  const F = FONTS[a.font]; const weight = a.bold ? 700 : 400;
+  if (F.file) ensureFont(a.font, a.bold);
+  return { css: F.css, weight, str: a.text, hs: F.file ? 1 : (a.hscale || 1), off: boff(F.css, weight) };
+}
+function styleText(n, a, L) {
+  L = L || textLook(a);
+  Object.assign(n.style, { fontSize: a.size * S.scale + 'px', color: a.color, fontFamily: L.css, fontWeight: L.weight,
+    left: a.x * S.scale + 'px', top: (a.y + (REF - L.off) * a.size) * S.scale + 'px',
+    transform: L.hs !== 1 ? `scaleX(${L.hs})` : '', transformOrigin: '0 0' });
+}
 function annBox(a) {
   if (a.type !== 'text') return { w: a.w, h: a.h };
+  const L = textLook(a);
   const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
-  ctx.font = `${a.bold ? 700 : 400} ${a.size}px ${FONTS[a.font].css}`;
-  const lines = (a.text || ' ').split('\n');
-  return { w: Math.max(6, ...lines.map(l => ctx.measureText(l).width)) * (a.hscale || 1), h: lines.length * a.size * 1.2 };
+  ctx.font = `${L.weight} ${a.size}px ${L.css}`;
+  const lines = (L.str || ' ').split('\n');
+  return { w: Math.max(6, ...lines.map(l => ctx.measureText(l).width)) * L.hs, h: lines.length * a.size * 1.2 };
 }
 const pathD = pts => pts.length === 1 ? `M${pts[0][0]} ${pts[0][1]}l.01 0` : pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(2) + ' ' + q[1].toFixed(2)).join('');
 
 function renderOverlay(p) {
   const ov = overlayOf(p.id); if (!ov) return;
-  ov.querySelectorAll('.ann').forEach(n => n.remove());
+  // the text being typed in keeps its node, so a re-render never interrupts typing
+  const keep = S.editing && ov.querySelector(`.ann.editing[data-id="${S.editing}"]`);
+  ov.querySelectorAll('.ann').forEach(n => { if (n !== keep) n.remove(); });
   const s = S.scale;
   for (const a of p.annots) {
     let n;
+    if (keep && a.id === S.editing) { styleText(keep, a); continue; }
     if (a.type === 'text') {
-      n = el('div', 'ann text'); n.textContent = a.text;
-      Object.assign(n.style, { fontSize: a.size * s + 'px', color: a.color, fontFamily: FONTS[a.font].css, fontWeight: a.bold ? 700 : 400 });
-      if (a.hscale && a.hscale !== 1) { n.style.transform = `scaleX(${a.hscale})`; n.style.transformOrigin = '0 0'; }
+      n = el('div', 'ann text'); const L = textLook(a); n.textContent = L.str; styleText(n, a, L);
     } else if (a.type === 'pen') {
       n = el('div', 'ann pen', `<svg viewBox="0 0 ${Math.max(a.w, .01)} ${Math.max(a.h, .01)}" preserveAspectRatio="none"><path d="${pathD(a.pts)}" fill="none" stroke="${a.color}" stroke-width="${a.stroke}" stroke-linecap="round" stroke-linejoin="round" vector-effect="none"/></svg>`);
       n.style.width = Math.max(a.w, .01) * s + 'px'; n.style.height = Math.max(a.h, .01) * s + 'px';
@@ -472,7 +546,7 @@ function renderOverlay(p) {
       if (a.type === 'rect') { n.style.borderColor = a.color; n.style.borderWidth = a.stroke * s + 'px'; }
     }
     if (a.type !== 'text' && a.type !== 'pen') { n.style.width = a.w * s + 'px'; n.style.height = a.h * s + 'px'; }
-    n.style.left = a.x * s + 'px'; n.style.top = a.y * s + 'px';
+    if (a.type !== 'text') { n.style.left = a.x * s + 'px'; n.style.top = a.y * s + 'px'; }
     n.dataset.id = a.id;
     if (a.id === S.selected) { n.classList.add('selected'); if (a.type !== 'text') n.append(el('span', 'handle')); }
     ov.append(n);
@@ -597,13 +671,14 @@ pagesEl.addEventListener('click', e => { const b = e.target.closest('[data-act]'
 function startEditing(id, isNew, selectAll) {
   const { p, a } = locate(id); if (!a) return;
   if (!isNew) pushHistory();
-  S.selected = id; renderOverlay(p);
+  S.selected = id; S.editing = id; renderOverlay(p);
   const n = overlayOf(p.id).querySelector(`.ann[data-id="${id}"]`);
-  S.editing = id; n.contentEditable = 'true'; n.spellcheck = true; n.classList.add('editing'); n.classList.remove('selected');
-  n.focus();
+  n.contentEditable = 'true'; n.spellcheck = true; n.classList.add('editing'); n.classList.remove('selected');
+  n.focus({ preventScroll: true });
   const r = document.createRange(); r.selectNodeContents(n); if (!selectAll) r.collapse(false);
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
   n.addEventListener('input', () => { a.text = readText(n); });
+  if (a.pf) ensureFont(a.font, a.bold);
   n.addEventListener('blur', () => stopEditing());
   n.addEventListener('paste', ev => { ev.preventDefault(); document.execCommand('insertText', false, (ev.clipboardData || window.clipboardData).getData('text/plain')); });
   n.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); n.blur(); } });
@@ -617,6 +692,7 @@ function stopEditing() {
   if (n) a.text = readText(n);
   if (a.cover && a.text === a.orig) { p.annots = p.annots.filter(x => x !== a && x.id !== a.cover); if (S.selected === id) S.selected = null; }
   else if (!a.text.trim()) { p.annots = p.annots.filter(x => x !== a); if (S.selected === id) S.selected = null; }
+  else if (a.pf) { const miss = missingInPf(a); if (miss.length) toast(`« ${miss.slice(0, 6).join(' ')} » n’existe pas dans la police du PDF : ce texte utilise ${FONTS[a.font].label}.`); }
   renderOverlay(p); renderOptions();
 }
 
@@ -654,7 +730,9 @@ function renderOptions() {
   if (type === 'text') {
     const size = a ? a.size : S.size;
     const sizes = [...new Set([8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, size])].sort((x, y) => x - y);
-    h += `<div class="optgroup"><label for="optFont">Police</label><select id="optFont">${Object.keys(FONTS).map(k => `<option value="${k}" ${k === (a ? a.font : S.font) ? 'selected' : ''}>${FONTS[k].label}</option>`).join('')}</select></div>`;
+    const curF = a && a.pf ? '__pf' : (a ? a.font : S.font);
+    const pfOpt = a && a.pfOrig && PF[a.pfOrig] ? `<option value="__pf" ${curF === '__pf' ? 'selected' : ''}>Police du PDF (${PF[a.pfOrig].label})</option>` : '';
+    h += `<div class="optgroup"><label for="optFont">Police</label><select id="optFont">${pfOpt}${Object.keys(FONTS).map(k => `<option value="${k}" ${k === curF ? 'selected' : ''}>${FONTS[k].label}</option>`).join('')}</select></div>`;
     h += `<div class="optgroup"><label for="optSize">Taille</label><select id="optSize">${sizes.map(v => `<option value="${v}" ${v === size ? 'selected' : ''}>${v}</option>`).join('')}</select></div>`;
     h += `<button class="obtn" id="optBold" aria-pressed="${a ? a.bold : S.bold}" title="Gras"><b>G</b></button>`;
     h += swatchGroup(COLORS, a ? a.color : S.color, 'data-color');
@@ -679,8 +757,8 @@ function applyOpt(fn) {
     const { p } = locate(a.id);
     if (S.editing === a.id) {
       const n = overlayOf(p.id).querySelector(`.ann[data-id="${a.id}"]`);
-      Object.assign(n.style, { fontSize: a.size * S.scale + 'px', color: a.color, fontFamily: FONTS[a.font].css, fontWeight: a.bold ? 700 : 400 });
-      n.focus();
+      styleText(n, a);
+      n.focus({ preventScroll: true });
     } else renderOverlay(p);
   }
   renderOptions();
@@ -690,7 +768,7 @@ optbar.addEventListener('click', e => {
   const c = e.target.closest('[data-color]'), hl = e.target.closest('[data-hl]');
   if (c) { S.color = c.dataset.color; applyOpt(a => { if (a.type !== 'highlight' && a.type !== 'whiteout' && a.type !== 'image') a.color = S.color; }); }
   else if (hl) { S.hl = hl.dataset.hl; applyOpt(a => { if (a.type === 'highlight') a.color = S.hl; }); }
-  else if (e.target.closest('#optBold')) { S.bold = !(selAnn() ? selAnn().bold : S.bold); applyOpt(a => { if (a.type === 'text') a.bold = S.bold; }); }
+  else if (e.target.closest('#optBold')) { S.bold = !(selAnn() ? selAnn().bold : S.bold); applyOpt(a => { if (a.type === 'text') { a.bold = S.bold; a.pf = null; } }); }
   else if (e.target.closest('#optRestore')) {
     const a = selAnn() || (S.editing && locate(S.editing).a); if (!a) return;
     const { p } = locate(a.id); S.editing = null; pushHistory();
@@ -700,7 +778,10 @@ optbar.addEventListener('click', e => {
 });
 optbar.addEventListener('change', e => {
   const t = e.target;
-  if (t.id === 'optFont') { S.font = t.value; applyOpt(a => { if (a.type === 'text') a.font = S.font; }); }
+  if (t.id === 'optFont') {
+    if (t.value === '__pf') applyOpt(a => { if (a.type === 'text') a.pf = a.pfOrig; });
+    else { S.font = t.value; applyOpt(a => { if (a.type === 'text') { a.font = S.font; a.pf = null; } }); }
+  }
   if (t.id === 'optSize') { S.size = +t.value; applyOpt(a => { if (a.type === 'text') a.size = S.size; }); }
   if (t.id === 'optStroke') { S.stroke = +t.value; applyOpt(a => { if (a.stroke) a.stroke = S.stroke; }); }
   if (t.id === 'optColor') {
@@ -772,34 +853,64 @@ function sampleColors(p, b) {
   const hex = v => '#' + v.map(x => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
   return { bg: hex(bg), fg: n && maxd > 60 ? hex([r / n, g / n, bl / n]) : '#111111' };
 }
+function familyOf(name) {
+  const n = (name || '').toLowerCase().replace(/^[a-z]{6}\+/, '').replace(/[\s_-]/g, '');
+  if (/dejavusansmono/.test(n)) return 'DejaVuSansMono';
+  if (/dejavuserif/.test(n)) return 'DejaVuSerif';
+  if (/dejavusans|bitstreamverasans|verasans/.test(n)) return 'DejaVuSans';
+  if (/calibri|carlito/.test(n)) return 'Carlito';
+  if (/cambria|caladea/.test(n)) return 'Caladea';
+  if (/couriernew|courier|liberationmono|cousine|nimbusmono/.test(n)) return 'LiberationMono';
+  if (/arial|helvetica|liberationsans|arimo|nimbussans/.test(n)) return 'LiberationSans';
+  if (/times|liberationserif|tinos|nimbusrom/.test(n)) return 'LiberationSerif';
+  return null;
+}
+function registerPf(fo, id) {
+  if (!id) return null;
+  if (PF[id]) return id;
+  if (fo.isType3Font || !fo.toUnicode) return null;
+  const inv = new Map(); const m = fo.toUnicode._map;
+  if (m) { for (const k in m) { const u = m[k]; if (typeof u === 'string' && u.length && u !== '\u0000' && !inv.has(u)) inv.set(u, +k); } }
+  else if (fo.toUnicode.firstChar != null) { for (let c = fo.toUnicode.firstChar; c <= fo.toUnicode.lastChar; c++) inv.set(String.fromCharCode(c), c); }
+  if (!inv.size) return null;
+  const face = !fo.missingFile && !!fo.loadedName && [...document.fonts].some(ff => ff.family.replace(/"/g, '') === fo.loadedName);
+  PF[id] = { css: fo.loadedName, name: fo.name || '', label: (fo.name || 'origine').replace(/^[A-Z]{6}\+/, '').replace(/-\d+$/, ''), inv, fc: fo.toFontChar || [], comp: !!fo.composite, face };
+  return id;
+}
 async function replaceText(p, pt) {
   const b = hitBox(await textBoxes(p), pt);
   if (!b) { toast('Aucun texte modifiable ici. Utilise l’outil Texte pour en ajouter.'); return; }
-  // font of the original: name, bold
-  let fname = '', bold = false;
+  // the PDF's own font
+  let fname = '', bold = false, pfId = null;
   try {
     const pg = await S.sources[p.src].doc.getPage(p.idx + 1);
     if (pg.commonObjs.has(b.fontName)) {
       const fo = pg.commonObjs.get(b.fontName);
-      fname = (fo.name || '') + ' ' + (fo.fallbackName || '');
-      bold = !!(fo.bold || fo.black) || /bold|black|heavy|semibold|demi/i.test(fo.name || '');
+      fname = fo.name || '';
+      bold = !!(fo.bold || fo.black) || /bold|black|heavy|semibold|demi/i.test(fname);
+      pfId = registerPf(fo, b.fontName);
     }
   } catch (e) { }
   const nm = (fname + ' ' + b.family).toLowerCase();
-  const font = /courier|mono|consol|menlo/.test(nm) ? 'Courier'
-    : /times|serif|garamond|georgia|cambria|minion|palatino|book/.test(nm.replace(/sans-serif|sans/g, '')) ? 'Times' : 'Helvetica';
+  const fam = familyOf(fname);
+  const font = fam || (/courier|mono|consol|menlo/.test(nm) ? 'Courier'
+    : /times|serif|garamond|georgia|cambria|minion|palatino|book/.test(nm.replace(/sans-serif|sans/g, '')) ? 'Times' : 'Helvetica');
+  if (fam) ensureFont(fam, bold);
   const col = sampleColors(p, b) || { bg: '#ffffff', fg: '#111111' };
   const size = Math.round(b.size * 10) / 10;
   // horizontal scale so the text keeps the width of the original
-  const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
-  ctx.font = `${bold ? 700 : 400} ${size}px ${FONTS[font].css}`;
-  const mw = ctx.measureText(b.str).width;
-  let hscale = mw > 0 ? b.w / mw : 1;
-  hscale = Math.abs(hscale - 1) < .03 ? 1 : Math.max(.8, Math.min(1.25, hscale));
+  let hscale = 1;
+  if (!FONTS[font].file) {
+    const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
+    ctx.font = `${bold ? 700 : 400} ${size}px ${FONTS[font].css}`;
+    const mw = ctx.measureText(b.str).width;
+    hscale = mw > 0 ? b.w / mw : 1;
+    hscale = Math.abs(hscale - 1) < .03 ? 1 : Math.max(.8, Math.min(1.25, hscale));
+  }
   pushHistory();
   const pad = Math.max(1, b.size * .12);
   const wo = { id: uid(), type: 'whiteout', x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2, fill: col.bg };
-  const ta = { id: uid(), type: 'text', x: b.x, y: b.base - FONTS[font].base * size, text: b.str, orig: b.str, cover: wo.id, size, color: col.fg, font, bold, hscale };
+  const ta = { id: uid(), type: 'text', x: b.x, y: b.base - REF * size, text: b.str, orig: b.str, cover: wo.id, size, color: col.fg, font, bold, hscale, pf: pfId, pfOrig: pfId };
   p.annots.push(wo, ta);
   S.color = col.fg; S.bold = bold; S.font = font; S.size = size;
   pagesEl.querySelectorAll('.hover-box').forEach(h => h.style.display = 'none');
@@ -1039,23 +1150,64 @@ async function buildPdf() {
   }
   const fonts = {}, imgs = {};
   const getFont = async n => fonts[n] || (fonts[n] = await out.embedFont(StandardFonts[n]));
+  const getFileFont = async file => {
+    if (fonts[file]) return fonts[file];
+    if (!window.fontkit) await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'lib/fontkit.umd.min.js'; sc.onload = ok; sc.onerror = ko; document.head.append(sc); });
+    if (!out._fk) { out.registerFontkit(window.fontkit); out._fk = true; }
+    const bytes = await (await fetch(`fonts/${file}.ttf`)).arrayBuffer();
+    return fonts[file] = await out.embedFont(bytes, { subset: true });
+  };
+  // fonts already in the output, by their PostScript name (to reuse the PDF's own fonts)
+  let fontRefs = null;
+  const findFontRef = name => {
+    if (!fontRefs) {
+      fontRefs = new Map();
+      for (const [ref, obj] of out.context.enumerateIndirectObjects()) {
+        if (!(obj instanceof PDFDict) || obj.get(PDFName.of('Type')) !== PDFName.of('Font')) continue;
+        const st = obj.get(PDFName.of('Subtype')); if (st === PDFName.of('CIDFontType2') || st === PDFName.of('CIDFontType0')) continue;
+        const bf = obj.get(PDFName.of('BaseFont')); if (!(bf instanceof PDFName)) continue;
+        const nm = bf.decodeText(); if (!fontRefs.has(nm)) fontRefs.set(nm, { ref, type0: st === PDFName.of('Type0') });
+      }
+    }
+    return fontRefs.get(name);
+  };
   for (const p of S.pages) {
     const page = p.src >= 0 ? out.addPage(copied.get(p.id)) : out.addPage([p.box[2] - p.box[0], p.box[3] - p.box[1]]);
     const { R } = dims(p); page.setRotation(degrees(R));
     const M = mapper(p), rot = degrees(R);
     for (const a of p.annots) {
       if (a.type === 'text') {
-        const F = FONTS[a.font], font = await getFont(a.bold ? F.bold : F.reg);
-        const hs = a.hscale || 1;
+        const c = hexRgb(a.color), th = R * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+        const base = i => M(a.x, a.y + REF * a.size + i * a.size * 1.2);
+        // 1. the PDF's own font, when it has every letter
+        const P = a.pf && PF[a.pf], codes = P && pfCodes(a), fr = codes && findFontRef(P.name);
+        if (fr) {
+          page._origFonts = page._origFonts || {};
+          const key = page._origFonts[P.name] || (page._origFonts[P.name] = page.node.newFontDictionary('EPorig', fr.ref));
+          const w = fr.type0 ? 4 : 2;
+          const ops = [pushGraphicsState(), beginText(), setFillingRgbColor(c.red, c.green, c.blue), setFontAndSize(key, a.size),
+            setCharacterSpacing(0), setWordSpacing(0), setCharacterSqueeze(100), setTextRise(0), setTextRenderingMode(TextRenderingMode.Fill)];
+          codes.forEach((line, i) => {
+            if (!line.length) return; const o = base(i);
+            ops.push(setTextMatrix(cs, sn, -sn, cs, o.x, o.y), showText(PDFHexString.of(line.map(x => x.toString(16).padStart(w, '0')).join(''))));
+          });
+          ops.push(endText(), popGraphicsState());
+          page.pushOperators(...ops);
+          continue;
+        }
+        // 2. a bundled font of the same family, 3. a standard font (stretched to the original width)
+        const F = FONTS[a.font];
+        const font = F.file ? await getFileFont(a.bold ? F.boldFile : F.file) : await getFont(a.bold ? F.bold : F.reg);
+        const hs = F.file ? 1 : (a.hscale || 1);
         if (hs !== 1) {
-          const o = M(a.x, a.y + F.base * a.size), th = R * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th);
-          const A11 = c * c * hs + sn * sn, A12 = c * sn * (hs - 1), A22 = sn * sn * hs + c * c;
+          const o = base(0);
+          const A11 = cs * cs * hs + sn * sn, A12 = cs * sn * (hs - 1), A22 = sn * sn * hs + cs * cs;
           page.pushOperators(pushGraphicsState(), concatTransformationMatrix(A11, A12, A12, A22, o.x - (A11 * o.x + A12 * o.y), o.y - (A12 * o.x + A22 * o.y)));
         }
         a.text.split('\n').forEach((ln, i) => {
           ln = ln.replace(/\t/g, '    '); if (!ln.trim()) return;
-          const o = M(a.x, a.y + i * a.size * 1.2 + F.base * a.size);
-          page.drawText(safeText(font, ln), { x: o.x, y: o.y, size: a.size, font, color: hexRgb(a.color), rotate: rot });
+          const o = base(i);
+          page.drawText(F.file ? ln : safeText(font, ln), { x: o.x, y: o.y, size: a.size, font, color: c, rotate: rot });
         });
         if (hs !== 1) page.pushOperators(popGraphicsState());
       } else if (a.type === 'image') {
@@ -1097,7 +1249,7 @@ async function download() {
   } catch (err) { console.error(err); toast('La création du PDF a échoué : ' + (err.message || err)); }
   finally { busy(false); }
 }
-window.__editeur = { S, buildPdf, setTool };
+window.__editeur = { S, buildPdf, setTool, textBoxes, replaceText, PF };
 
 /* ---------- top bar wiring ---------- */
 $('#btnOpen').onclick = () => $('#fileOpen').click();
@@ -1141,7 +1293,7 @@ function updateUI() {
 /* ---------- keyboard, drop, resize ---------- */
 document.addEventListener('keydown', e => {
   const tag = (document.activeElement && document.activeElement.tagName) || '';
-  const typing = S.editing || /INPUT|SELECT|TEXTAREA/.test(tag);
+  const typing = S.editing || (/INPUT|SELECT|TEXTAREA/.test(tag) && !['file', 'color', 'button'].includes(document.activeElement.type));
   const mod = e.ctrlKey || e.metaKey;
   if (!$('#sigModal').hidden) { if (e.key === 'Escape') closeSig(); return; }
   if (mod && !typing && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }

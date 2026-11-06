@@ -12,7 +12,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=2">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2">
-<link rel="manifest" href="manifest.webmanifest?v=2">
+<link rel="manifest" href="manifest.webmanifest?v=3">
 <meta name="theme-color" content="#181b20">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -1337,6 +1337,14 @@ let lastW = desk.clientWidth, rT;
 window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (Math.abs(desk.clientWidth - lastW) > 20 && S.pages.length) { lastW = desk.clientWidth; renderAll(currentPage()?.id); } }, 250); });
 window.addEventListener('beforeunload', e => { if (S.dirty && S.pages.length) { e.preventDefault(); e.returnValue = ''; } });
 
+/* PDFs opened from the computer ("Ouvrir avec" > Éditeur PDF, Chrome/Edge installed app) */
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async params => {
+    if (!params.files || !params.files.length) return;
+    const files = await Promise.all(params.files.map(h => h.getFile()));
+    openFiles(files, true);
+  });
+}
 /* toolbar: drop labels step by step until everything fits on one line */
 const topbar = document.querySelector('.topbar');
 function fitToolbar() {

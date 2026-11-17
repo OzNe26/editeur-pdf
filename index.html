@@ -126,6 +126,25 @@ body[data-tool="select"] .ann.whiteout:hover:not(.selected){outline:1px dashed #
 .features{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin:24px 0 0;padding:18px 0 0;border-top:1px solid var(--line);list-style:none;font-size:13px;color:#3c434d}
 .features li::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:2px}
 
+/* converter */
+@font-face{font-family:"Calibri";src:local("Calibri"),url(fonts/Carlito-Regular.ttf) format("truetype");font-weight:400}
+@font-face{font-family:"Calibri";src:local("Calibri Bold"),local("Calibri-Bold"),url(fonts/Carlito-Bold.ttf) format("truetype");font-weight:700}
+@font-face{font-family:"Calibri Light";src:local("Calibri Light"),url(fonts/Carlito-Regular.ttf) format("truetype")}
+@font-face{font-family:"Cambria";src:local("Cambria"),url(fonts/Caladea-Regular.ttf) format("truetype");font-weight:400}
+@font-face{font-family:"Cambria";src:local("Cambria Bold"),local("Cambria-Bold"),url(fonts/Caladea-Bold.ttf) format("truetype");font-weight:700}
+.conv-card{width:min(720px,100%)}
+.conv-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:6px}
+.conv-sec{font:500 11px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 0 8px}
+.conv{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;text-align:left;color:var(--text)}
+.conv:hover:not(:disabled){border-color:var(--accent);box-shadow:0 0 0 3px rgba(228,87,46,.12)}
+.conv:disabled{opacity:.45;cursor:default}
+.conv b{font-size:14px}
+.conv small{color:var(--muted);font-size:12px}
+.badge{display:inline-grid;place-items:center;min-width:28px;height:28px;padding:0 6px;border-radius:6px;font:600 12px var(--mono);color:#fff;margin-bottom:4px}
+.badge.w{background:#2b579a}.badge.p{background:#c43e1c}.badge.x{background:#217346}.badge.i{background:#6b4fbb}.badge.f{background:var(--accent)}
+.conv-note{font-size:12.5px;margin:14px 0 0 !important;line-height:1.5}
+.conv-stage{position:fixed;left:-30000px;top:0;background:#fff;color:#000;z-index:-1}
+@media (max-width:600px){.conv-grid{grid-template-columns:1fr 1fr}}
 /* modal, toast, busy */
 .modal{position:fixed;inset:0;background:rgba(15,18,24,.5);display:grid;place-items:center;padding:16px;z-index:50}
 .modal[hidden]{display:none}
@@ -165,6 +184,7 @@ body.c1 .lbl2,body.c2 .tool .lbl,body.c3 .brand .lbl{display:none}
   <button class="tbtn" id="sideToggle" title="Afficher les pages" data-icon="grid"></button>
   <button class="tbtn" id="btnOpen" title="Ouvrir un PDF (remplace le document)" data-icon="open"><span class="lbl lbl2">Ouvrir</span></button>
   <button class="tbtn" id="btnAdd" title="Ajouter un PDF à la fin (fusion)" data-icon="merge"><span class="lbl lbl2">Fusionner</span></button>
+  <button class="tbtn" id="btnConvert" title="Convertir Word, PowerPoint, Excel, images ↔ PDF" data-icon="convert"><span class="lbl lbl2">Convertir</span></button>
   <span class="sep"></span>
   <button class="tbtn tool" data-tool="select" data-icon="select" title="Sélectionner et déplacer (V)"><span class="lbl">Sélection</span></button>
   <button class="tbtn tool" data-tool="text" data-icon="text" title="Ajouter du texte (T)"><span class="lbl">Texte</span></button>
@@ -204,6 +224,7 @@ body.c1 .lbl2,body.c2 .tool .lbl,body.c3 .brand .lbl{display:none}
         <div class="empty-actions">
           <button class="btn primary" id="emptyOpen">Choisir un PDF</button>
           <button class="btn" id="emptyBlank">Page blanche</button>
+          <button class="btn" id="emptyConvert">Convertir un fichier</button>
           <button class="btn" id="emptySample">Essayer avec un exemple</button>
         </div>
         <ul class="features">
@@ -236,10 +257,32 @@ body.c1 .lbl2,body.c2 .tool .lbl,body.c3 .brand .lbl{display:none}
   </div>
 </div>
 
+<div class="modal" id="convModal" hidden>
+  <div class="modal-card conv-card" role="dialog" aria-modal="true" aria-labelledby="convTitle">
+    <h2 id="convTitle">Convertir</h2>
+    <p>La conversion se fait dans ton navigateur : tes fichiers ne sont envoyés nulle part.</p>
+    <div class="conv-sec">Vers PDF · le résultat s’ouvre dans l’éditeur</div>
+    <div class="conv-grid">
+      <button class="conv" data-conv="docx"><span class="badge w">W</span><b>Word → PDF</b><small>.docx</small></button>
+      <button class="conv" data-conv="pptx"><span class="badge p">P</span><b>PowerPoint → PDF</b><small>.pptx</small></button>
+      <button class="conv" data-conv="xlsx"><span class="badge x">X</span><b>Excel → PDF</b><small>.xlsx, .xls, .csv</small></button>
+      <button class="conv" data-conv="img"><span class="badge i">IMG</span><b>Images → PDF</b><small>.jpg, .png… une page par image</small></button>
+    </div>
+    <div class="conv-sec">Depuis le PDF ouvert · avec tes modifications</div>
+    <div class="conv-grid">
+      <button class="conv" data-conv="pdf2img"><span class="badge f">PNG</span><b>PDF → Images</b><small>une image par page</small></button>
+      <button class="conv" data-conv="pdf2docx"><span class="badge w">W</span><b>PDF → Word</b><small>texte modifiable dans Word</small></button>
+    </div>
+    <p class="conv-note">Word, PowerPoint et Excel : la mise en page est reproduite au plus près, mais les pages du PDF obtenu sont des images. Tu peux les annoter, surligner et signer, pas utiliser « Modifier le texte ». PDF → Word reprend le texte et les titres, pas la mise en page exacte.</p>
+    <div class="modal-row"><span class="spacer"></span><button class="btn" id="convClose">Fermer</button></div>
+  </div>
+</div>
+<input type="file" id="fileConv" hidden>
+
 <div class="busy" id="busy" hidden><div><span class="spin"></span><span id="busyText">Chargement…</span></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<input type="file" id="fileOpen" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="fileOpen" accept="application/pdf,.pdf,.docx,.pptx,.xlsx,.xls,.csv,.ods,image/*" multiple hidden>
 <input type="file" id="fileAdd" accept="application/pdf,.pdf" multiple hidden>
 <input type="file" id="fileImg" accept="image/*" hidden>
 
@@ -275,6 +318,7 @@ const ICONS = {
   rotl:'<path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5"/><path d="M4 3.5V9h5.5"/>',
   rotr:'<path d="M19.5 12a7.5 7.5 0 1 1-2.4-5.5"/><path d="M20 3.5V9h-5.5"/>',
   dup:'<rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>',
+  convert:'<path d="M4 8h13l-3.5-3.5"/><path d="M20 16H7l3.5 3.5"/>',
   trash:'<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>'
 };
 const icon = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
@@ -356,14 +400,23 @@ async function addPdfBytes(bytes, name, replace) {
   return true;
 }
 async function openFiles(files, replace) {
-  const pdfs = [...files].filter(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
-  if (!pdfs.length) { toast('Choisis un fichier PDF.'); return; }
+  files = [...files];
+  const usable = files.filter(f => kindOf(f));
+  if (!usable.length) { toast('Choisis un PDF, un fichier Word, PowerPoint, Excel ou une image.'); return; }
   if (S.editing) stopEditing();
-  busy(true, 'Ouverture du PDF…');
+  busy(true, 'Ouverture…');
   try {
     let first = replace;
-    for (const f of pdfs) { const ok = await addPdfBytes(new Uint8Array(await f.arrayBuffer()), f.name, first); if (ok) first = false; }
-  } finally { busy(false); }
+    const imgs = usable.filter(f => kindOf(f) === 'img');
+    for (const f of usable) {
+      const k = kindOf(f); if (k === 'img') continue;
+      const bytes = k === 'pdf' ? new Uint8Array(await f.arrayBuffer()) : await convertToPdf(k, f);
+      if (!bytes) continue;
+      const ok = await addPdfBytes(bytes, k === 'pdf' ? f.name : baseName(f.name) + '.pdf', first); if (ok) first = false;
+    }
+    if (imgs.length) { const bytes = await imagesToPdf(imgs); if (bytes && await addPdfBytes(bytes, imgs.length === 1 ? baseName(imgs[0].name) + '.pdf' : 'images.pdf', first)) first = false; }
+  } catch (err) { console.error(err); toast(err.message || 'La conversion a échoué.'); }
+  finally { busy(false); }
 }
 function blankPage(W = 595.28, H = 841.89) { return { id: uid(), src: -1, idx: 0, rot: 0, baseRot: 0, box: [0, 0, W, H], annots: [] }; }
 
@@ -1126,6 +1179,299 @@ $('#sigOk').onclick = () => {
   closeSig(); addImageAnn(data, c.width, c.height, 150, 'Signature');
 };
 
+/* ---------- conversions ---------- */
+const baseName = n => n.replace(/\.[^.]+$/, '');
+function kindOf(f) {
+  const n = f.name || '';
+  if (/\.pdf$/i.test(n) || f.type === 'application/pdf') return 'pdf';
+  if (/\.docx$/i.test(n)) return 'docx';
+  if (/\.pptx$/i.test(n)) return 'pptx';
+  if (/\.(xlsx|xlsm|xls|csv|ods)$/i.test(n)) return 'xlsx';
+  if (/^image\//.test(f.type) || /\.(jpe?g|png|webp|gif|bmp)$/i.test(n)) return 'img';
+  if (/\.(doc|ppt)$/i.test(n)) return 'old';
+  return null;
+}
+const scriptCache = {};
+function loadScript(src) {
+  return scriptCache[src] || (scriptCache[src] = new Promise((ok, ko) => {
+    const sc = document.createElement('script'); sc.src = src; sc.onload = ok;
+    sc.onerror = () => { delete scriptCache[src]; ko(new Error('Le module de conversion n’a pas pu se charger. Vérifie ta connexion internet.')); };
+    document.head.append(sc);
+  }));
+}
+// docx-preview and the docx generator both claim window.docx: keep each one apart
+let DocxPreview = null, DocxGen = null;
+async function getDocxPreview() {
+  if (DocxPreview) return DocxPreview;
+  await loadScript('lib/jszip.min.js');
+  const keep = window.docx; delete scriptCache['lib/docx-preview.min.js'];
+  await loadScript('lib/docx-preview.min.js'); DocxPreview = window.docx; window.docx = keep; return DocxPreview;
+}
+async function getDocxGen() {
+  if (DocxGen) return DocxGen;
+  const keep = window.docx; delete scriptCache['lib/docx.umd.js'];
+  await loadScript('lib/docx.umd.js'); DocxGen = window.docx; window.docx = keep; return DocxGen;
+}
+function newStage(width) { const st = el('div', 'conv-stage'); if (width) st.style.width = width + 'px'; document.body.append(st); return st; }
+async function settle(root) {
+  try { await document.fonts.ready; } catch (e) { }
+  await Promise.all([...root.querySelectorAll('img')].map(im => im.complete ? 0 : new Promise(r => { im.onload = im.onerror = r; })));
+  await new Promise(r => setTimeout(r, 120));
+}
+async function snap(node, opts = {}) {
+  await loadScript('lib/html2canvas.min.js');
+  return html2canvas(node, { scale: 2, backgroundColor: '#ffffff', logging: false, useCORS: true, ...opts });
+}
+// cut a tall canvas into pages, preferably between lines / rows
+function cutPoints(node, pageH, top, bottom) {
+  const base = node.getBoundingClientRect().top, total = node.offsetHeight;
+  const ends = [...node.querySelectorAll('p,li,tr,h1,h2,h3,h4,h5,h6,img,table,div.docx-wrapper > *')]
+    .map(e => e.getBoundingClientRect().bottom - base).filter(v => v > 0 && v < total).sort((a, b) => a - b);
+  const pts = [0]; let start = 0;
+  while (total - start > pageH - (start ? top : 0) - bottom + 1) {
+    const room = pageH - bottom - (start ? top : 0);
+    const limit = start + room;
+    let cut = 0; for (const v of ends) { if (v > start + room * .5 && v <= limit) cut = v; if (v > limit) break; }
+    if (!cut) cut = limit;
+    pts.push(cut); start = cut;
+  }
+  pts.push(total); return pts;
+}
+async function pagesFromNode(node, pageWpx, pageHpx, padTop, padBot, out) {
+  const canvas = await snap(node);
+  const k = canvas.width / node.offsetWidth;
+  const pts = cutPoints(node, pageHpx, padTop, padBot);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const y0 = pts[i], y1 = pts[i + 1], off = i ? padTop : 0;
+    const pc = document.createElement('canvas'); pc.width = Math.round(pageWpx * k); pc.height = Math.round(pageHpx * k);
+    const ctx = pc.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, pc.width, pc.height);
+    ctx.drawImage(canvas, 0, y0 * k, canvas.width, (y1 - y0) * k, 0, off * k, canvas.width, (y1 - y0) * k);
+    out.push({ canvas: pc, w: pageWpx * .75, h: pageHpx * .75 });
+  }
+}
+async function canvasesToPdf(list) {
+  const d = await PDFDocument.create();
+  for (const { canvas, w, h } of list) {
+    const im = await d.embedJpg(b64(canvas.toDataURL('image/jpeg', .9)));
+    d.addPage([w, h]).drawImage(im, { x: 0, y: 0, width: w, height: h });
+  }
+  return d.save();
+}
+async function convertToPdf(kind, file) {
+  if (kind === 'old') throw new Error(`« ${file.name} » est un ancien format (.doc/.ppt). Enregistre-le en .docx ou .pptx puis réessaie.`);
+  busy(true, `Conversion de « ${file.name} »…`);
+  if (kind === 'docx') return docxToPdf(file);
+  if (kind === 'pptx') return pptxToPdf(file);
+  if (kind === 'xlsx') return sheetToPdf(file);
+}
+async function docxToPdf(file) {
+  const dp = await getDocxPreview();
+  const st = newStage(); const box = el('div'); st.append(box);
+  try {
+    await dp.renderAsync(file, box, null, { inWrapper: false, breakPages: true, ignoreLastRenderedPageBreak: false, experimental: true, renderHeaders: true, renderFooters: true, renderFootnotes: true, useBase64URL: true });
+    await settle(box);
+    const out = [], secs = [...box.querySelectorAll('section.docx')];
+    for (let i = 0; i < secs.length; i++) {
+      busy(true, `Conversion de « ${file.name} » · section ${i + 1}/${secs.length}`);
+      const sec = secs[i], cs = getComputedStyle(sec);
+      const W = sec.offsetWidth, H = parseFloat(cs.minHeight) || W * 1.4142;
+      sec.style.minHeight = '0'; sec.style.height = 'auto';
+      if (sec.offsetHeight < H) sec.style.minHeight = H + 'px';
+      await pagesFromNode(sec, W, H, parseFloat(cs.paddingTop) || 72, parseFloat(cs.paddingBottom) || 72, out);
+    }
+    if (!out.length) throw new Error('Ce document Word est vide ou illisible.');
+    return await canvasesToPdf(out);
+  } finally { st.remove(); }
+}
+async function pptxToPdf(file) {
+  await loadScript('lib/jszip.min.js');
+  const buf = await file.arrayBuffer();
+  let cx = 12192000, cy = 6858000;
+  try {
+    const zip = await JSZip.loadAsync(buf.slice(0));
+    const xml = await zip.file('ppt/presentation.xml').async('string');
+    const m = xml.match(/<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/); if (m) { cx = +m[1]; cy = +m[2]; }
+  } catch (e) { throw new Error(`« ${file.name} » n’est pas un fichier PowerPoint lisible.`); }
+  await loadScript('https://cdn.jsdelivr.net/npm/pptx-preview@1.0.7/dist/pptx-preview.umd.js');
+  const W = 1280, H = Math.round(W * cy / cx);
+  const st = newStage(W); const box = el('div'); st.append(box);
+  try {
+    const pv = window.pptxPreview.init(box, { width: W, height: H, mode: 'list' });
+    await pv.preview(buf);
+    await settle(box); await new Promise(r => setTimeout(r, 400));
+    const slides = [...box.querySelectorAll('.pptx-preview-slide-wrapper')], out = [];
+    for (let i = 0; i < slides.length; i++) {
+      busy(true, `Conversion de « ${file.name} » · diapositive ${i + 1}/${slides.length}`);
+      out.push({ canvas: await snap(slides[i], { width: W, height: H }), w: cx / 12700, h: cy / 12700 });
+    }
+    if (!out.length) throw new Error('Aucune diapositive trouvée dans ce fichier.');
+    return await canvasesToPdf(out);
+  } finally { st.remove(); }
+}
+async function sheetToPdf(file) {
+  await loadScript('lib/xlsx.full.min.js');
+  let wb;
+  try { wb = XLSX.read(await file.arrayBuffer(), { cellStyles: true, cellDates: true }); }
+  catch (e) { throw new Error(`« ${file.name} » n’est pas un tableur lisible.`); }
+  const W = 1123, H = 794, PAD = 40; // A4 paysage à 96 ppp
+  const out = [];
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name]; if (!ws['!ref']) continue;
+    busy(true, `Conversion de « ${file.name} » · feuille « ${name} »`);
+    const st = newStage(W);
+    st.innerHTML = `<div style="padding:${PAD}px;font:12px Calibri,Carlito,Arial,sans-serif;color:#111">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px">${name.replace(/</g, '&lt;')}</div>
+      <style>.sh table{border-collapse:collapse;width:100%;table-layout:auto}.sh td,.sh th{border:1px solid #c8ccd2;padding:4px 7px;vertical-align:top;white-space:nowrap;font-variant-numeric:tabular-nums}.sh tr:first-child td{background:#eef1f4;font-weight:700}</style>
+      <div class="sh">${XLSX.utils.sheet_to_html(ws, { header: '', footer: '' }).replace(/^[\s\S]*?<table/i, '<table').replace(/<\/table>[\s\S]*$/i, '</table>')}</div></div>`;
+    const node = st.firstElementChild;
+    const tw = node.scrollWidth; if (tw > W) { node.style.zoom = String(W / tw); }
+    try { await settle(st); await pagesFromNode(node, W, H, PAD, PAD, out); } finally { st.remove(); }
+  }
+  if (!out.length) throw new Error('Ce tableur ne contient aucune donnée.');
+  return canvasesToPdf(out);
+}
+async function imagesToPdf(files) {
+  const d = await PDFDocument.create();
+  for (let i = 0; i < files.length; i++) {
+    busy(true, `Images → PDF · ${i + 1}/${files.length}`);
+    let img; try { img = await loadImg(await readURL(files[i])); } catch (e) { toast(`Image illisible : ${files[i].name}`); continue; }
+    const max = 3000, k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
+    const png = /png|gif|webp/i.test(files[i].type);
+    const em = png ? await d.embedPng(b64(c.toDataURL('image/png'))) : await d.embedJpg(b64(c.toDataURL('image/jpeg', .92)));
+    const land = c.width > c.height, PW = land ? 841.89 : 595.28, PH = land ? 595.28 : 841.89, m = 24;
+    const sc = Math.min((PW - 2 * m) / c.width, (PH - 2 * m) / c.height);
+    const w = c.width * sc, h = c.height * sc;
+    d.addPage([PW, PH]).drawImage(em, { x: (PW - w) / 2, y: (PH - h) / 2, width: w, height: h });
+  }
+  return d.getPageCount() ? d.save() : null;
+}
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+async function currentPdfDoc() { const bytes = await buildPdf(); return pdfjsLib.getDocument({ data: bytes, cMapUrl: 'lib/cmaps/', cMapPacked: true, standardFontDataUrl: 'lib/standard_fonts/', fontExtraProperties: true }).promise; }
+async function pdfToImages() {
+  if (S.editing) stopEditing();
+  busy(true, 'PDF → Images…');
+  try {
+    const doc = await currentPdfDoc(); const name = S.fileName || 'document'; const blobs = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      busy(true, `PDF → Images · page ${i}/${doc.numPages}`);
+      const pg = await doc.getPage(i); const vp = pg.getViewport({ scale: 2 });
+      const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      blobs.push(await new Promise(r => c.toBlob(r, 'image/png')));
+    }
+    if (blobs.length === 1) saveBlob(blobs[0], `${name}.png`);
+    else {
+      await loadScript('lib/jszip.min.js'); const zip = new JSZip();
+      blobs.forEach((b, i) => zip.file(`${name}-page-${String(i + 1).padStart(2, '0')}.png`, b));
+      saveBlob(await zip.generateAsync({ type: 'blob' }), `${name}-images.zip`);
+    }
+    toast(blobs.length === 1 ? 'Image téléchargée' : `${blobs.length} images téléchargées (fichier .zip)`);
+  } catch (err) { console.error(err); toast('La conversion a échoué : ' + (err.message || err)); }
+  finally { busy(false); }
+}
+async function pdfToWord() {
+  if (S.editing) stopEditing();
+  busy(true, 'PDF → Word…');
+  try {
+    const D = await getDocxGen();
+    const sections = [];
+    for (let i = 1; i <= S.pages.length; i++) {
+      busy(true, `PDF → Word · page ${i}/${S.pages.length}`);
+      const sp = S.pages[i - 1];
+      const { R } = dims(sp), w = sp.box[2] - sp.box[0], h = sp.box[3] - sp.box[1];
+      const vp = { width: w, height: h };
+      // display → unrotated page coordinates
+      const un = (dx, dy) => R === 0 ? [dx, dy] : R === 90 ? [dy, h - dx] : R === 180 ? [w - dx, h - dy] : [w - dy, dx];
+      const covers = [];
+      for (const a of sp.annots) if (a.type === 'whiteout') {
+        const c = [un(a.x, a.y), un(a.x + a.w, a.y + a.h)];
+        covers.push([Math.min(c[0][0], c[1][0]), Math.min(c[0][1], c[1][1]), Math.max(c[0][0], c[1][0]), Math.max(c[0][1], c[1][1])]);
+      }
+      const items = [];
+      // 1. the page's own text, minus what « Masquer » hides
+      if (sp.src >= 0) {
+        const pg = await S.sources[sp.src].doc.getPage(sp.idx + 1); await pg.getOperatorList();
+        const pv = pg.getViewport({ scale: 1, rotation: 0 }); const tc = await pg.getTextContent();
+        for (const it of tc.items) {
+          if (!it.str) continue;
+          const t = pdfjsLib.Util.transform(pv.transform, it.transform);
+          if (Math.abs(t[1]) > .01 || Math.abs(t[2]) > .01 || t[0] <= 0) continue;
+          const cx = t[4] + it.width / 2, cy = t[5] - Math.abs(t[3]) / 3;
+          if (covers.some(c => cx >= c[0] && cx <= c[2] && cy >= c[1] && cy <= c[3])) continue;
+          let bold = false; try { const fo = pg.commonObjs.get(it.fontName); bold = !!fo.bold || /bold|black|heavy|semibold/i.test(fo.name || ''); } catch (e) { }
+          items.push({ x: t[4], y: t[5], size: Math.abs(t[3]) || 11, str: it.str, bold, w: it.width });
+        }
+      }
+      // 2. text written in the editor
+      for (const a of sp.annots) if (a.type === 'text' && a.text.trim()) {
+        a.text.split('\n').forEach((ln, k) => {
+          if (!ln.trim()) return;
+          const [x, y] = un(a.x, a.y + REF * a.size + k * a.size * 1.2);
+          const ctx = annBox.ctx || (annBox.ctx = document.createElement('canvas').getContext('2d'));
+          ctx.font = `${a.bold ? 700 : 400} ${a.size}px ${FONTS[a.font].css}`;
+          items.push({ x, y, size: a.size, str: ln, bold: !!a.bold, w: ctx.measureText(ln).width });
+        });
+      }
+      items.sort((a, b) => a.y - b.y || a.x - b.x);
+      // group into lines, then lines into paragraphs
+      const lines = [];
+      for (const it of items) {
+        const L = lines[lines.length - 1];
+        if (L && Math.abs(L.y - it.y) < Math.max(2, it.size * .35)) L.items.push(it); else lines.push({ y: it.y, items: [it] });
+      }
+      const paras = [];
+      for (const L of lines) {
+        L.items.sort((a, b) => a.x - b.x);
+        const size = Math.max(...L.items.map(x => x.size)), x0 = L.items[0].x;
+        const runs = []; let lastEnd = null;
+        for (const it of L.items) {
+          if (lastEnd != null && it.x - lastEnd > size * .15 && !/\s$/.test(runs.length ? runs[runs.length - 1].text : '') && !/^\s/.test(it.str)) runs.push({ text: ' ', bold: it.bold, size: it.size });
+          runs.push({ text: it.str, bold: it.bold, size: it.size }); lastEnd = it.x + it.w;
+        }
+        const P = paras[paras.length - 1];
+        const gap = P ? L.y - P.lastY : 99;
+        if (P && Math.abs(P.size - size) < .6 && gap < size * 1.6 && Math.abs(P.x0 - x0) < size * 2 && !P.heading) {
+          P.runs.push({ text: ' ', bold: false, size }, ...runs); P.lastY = L.y;
+        } else paras.push({ runs, size, x0, lastY: L.y, heading: size >= 15, spaceBefore: P ? Math.max(0, gap - size * 1.25) : 0 });
+      }
+      const children = paras.map(P => new D.Paragraph({
+        spacing: { before: Math.round(Math.min(P.spaceBefore, 30) * 20), after: 60 },
+        indent: P.x0 > 90 ? { left: Math.round((P.x0 - 72) * 20) } : undefined,
+        children: P.runs.map(r => new D.TextRun({ text: r.text, bold: r.bold, size: Math.max(12, Math.round(r.size * 2)), font: 'Calibri' }))
+      }));
+      sections.push({ properties: { page: { size: { width: Math.round(vp.width * 20), height: Math.round(vp.height * 20) }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } }, children: children.length ? children : [new D.Paragraph('')] });
+    }
+    const blob = await D.Packer.toBlob(new D.Document({ creator: 'Éditeur PDF', sections }));
+    saveBlob(blob, `${S.fileName || 'document'}.docx`);
+    toast('Fichier Word téléchargé');
+  } catch (err) { console.error(err); toast('La conversion a échoué : ' + (err.message || err)); }
+  finally { busy(false); }
+}
+const CONV_ACCEPT = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx,.xlsm,.xls,.csv,.ods', img: 'image/*' };
+let convKind = null;
+function openConv() {
+  document.querySelectorAll('[data-conv^="pdf2"]').forEach(b => b.disabled = !S.pages.length);
+  $('#convModal').hidden = false;
+}
+const closeConv = () => { $('#convModal').hidden = true; };
+$('#convModal').addEventListener('click', e => {
+  if (e.target.id === 'convModal' || e.target.closest('#convClose')) return closeConv();
+  const b = e.target.closest('[data-conv]'); if (!b || b.disabled) return;
+  const k = b.dataset.conv;
+  if (k === 'pdf2img') { closeConv(); return pdfToImages(); }
+  if (k === 'pdf2docx') { closeConv(); return pdfToWord(); }
+  convKind = k; const inp = $('#fileConv'); inp.accept = CONV_ACCEPT[k]; inp.multiple = k === 'img'; inp.value = ''; closeConv(); inp.click();
+});
+$('#fileConv').onchange = e => { const fs = [...e.target.files]; if (fs.length) openFiles(fs, true); e.target.value = ''; };
+$('#btnConvert').onclick = openConv;
+$('#emptyConvert').onclick = openConv;
+
 /* ---------- export ---------- */
 const hexRgb = h => { const n = parseInt(h.replace('#', ''), 16); return rgb((n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255); };
 const b64 = d => Uint8Array.from(atob(d.split(',')[1]), c => c.charCodeAt(0));
@@ -1306,6 +1652,7 @@ document.addEventListener('keydown', e => {
   const typing = S.editing || (/INPUT|SELECT|TEXTAREA/.test(tag) && !['file', 'color', 'button'].includes(document.activeElement.type));
   const mod = e.ctrlKey || e.metaKey;
   if (!$('#sigModal').hidden) { if (e.key === 'Escape') closeSig(); return; }
+  if (!$('#convModal').hidden) { if (e.key === 'Escape') $('#convModal').hidden = true; return; }
   if (mod && !typing && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && !typing && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); download(); return; }
@@ -1329,9 +1676,10 @@ window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); 
 window.addEventListener('drop', e => {
   if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $('#empty').classList.remove('drag');
   const files = [...e.dataTransfer.files];
-  const pdfs = files.filter(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)), imgs = files.filter(f => /^image\//.test(f.type));
-  if (pdfs.length) openFiles(pdfs, !S.pages.length);
-  else if (imgs.length) insertImageFile(imgs[0]);
+  const docs = files.filter(f => kindOf(f) && kindOf(f) !== 'img'), imgs = files.filter(f => kindOf(f) === 'img');
+  if (docs.length) openFiles(docs, !S.pages.length);
+  else if (imgs.length && S.pages.length) insertImageFile(imgs[0]);
+  else if (imgs.length) openFiles(imgs, true);
 });
 let lastW = desk.clientWidth, rT;
 window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (Math.abs(desk.clientWidth - lastW) > 20 && S.pages.length) { lastW = desk.clientWidth; renderAll(currentPage()?.id); } }, 250); });

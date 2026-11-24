@@ -1504,12 +1504,12 @@ function mapper(p) {
     return { x: bx1 + ux, y: by1 + h - uy };
   };
 }
-async function buildPdf() {
+async function buildPdf(rasterAll = false) {
   const out = await PDFDocument.create();
-  const bySrc = new Map();
+  const bySrc = new Map(), raster = new Set();
   for (const p of S.pages) if (p.src >= 0) { if (!bySrc.has(p.src)) bySrc.set(p.src, []); bySrc.get(p.src).push(p); }
   const copied = new Map();
-  for (const [src, list] of bySrc) {
+  if (!rasterAll) for (const [src, list] of bySrc) try {
     const doc = await PDFDocument.load(S.sources[src].bytes, { ignoreEncryption: true });
     // A page used several times (duplicates) must be copied in separate passes, or the copies share one content stream
     const rounds = [];
@@ -1519,7 +1519,7 @@ async function buildPdf() {
       const cps = await out.copyPages(doc, round.map(p => p.idx));
       round.forEach((p, i) => copied.set(p.id, cps[i]));
     }
-  }
+  } catch (err) { console.warn('Copie impossible, pages en image', err); list.forEach(p => raster.add(p.id)); }
   const fonts = {}, imgs = {};
   const getFont = async n => fonts[n] || (fonts[n] = await out.embedFont(StandardFonts[n]));
   const getFileFont = async file => {
@@ -1543,8 +1543,39 @@ async function buildPdf() {
     }
     return fontRefs.get(name);
   };
-  for (const p of S.pages) {
-    const page = p.src >= 0 ? out.addPage(copied.get(p.id)) : out.addPage([p.box[2] - p.box[0], p.box[3] - p.box[1]]);
+  // a page whose structure the PDF library cannot handle is saved as a picture, with the edits on top
+  const rasterPage = async p => {
+    const { W, H, R } = dims(p);
+    const page = out.addPage([W, H]);
+    if (p.src >= 0) {
+      const pg = await S.sources[p.src].doc.getPage(p.idx + 1);
+      const k = Math.min(2.5, 2600 / Math.max(W, H));
+      const vp = pg.getViewport({ scale: k, rotation: R });
+      const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      page.drawImage(await out.embedJpg(b64(c.toDataURL('image/jpeg', .9))), { x: 0, y: 0, width: W, height: H });
+    }
+    return page;
+  };
+  buildPdf.rastered = 0;
+  for (const p0 of S.pages) {
+    let page = null, p = p0;
+    if (!rasterAll && !raster.has(p0.id)) {
+      try {
+        page = p0.src >= 0 ? out.addPage(copied.get(p0.id)) : out.addPage([p0.box[2] - p0.box[0], p0.box[3] - p0.box[1]]);
+        await drawAnnots(page, p0);
+        continue;
+      } catch (err) { console.warn('Page en image', err); if (page) out.removePage(out.getPageCount() - 1); }
+    }
+    page = await rasterPage(p0); buildPdf.rastered++;
+    const { W, H } = dims(p0);
+    await drawAnnots(page, { ...p0, box: [0, 0, W, H], baseRot: 0, rot: 0, annots: p0.annots.map(a => a.pf ? { ...a, pf: null } : a) });
+  }
+  try { return await out.save(); }
+  catch (err) { if (!rasterAll) { console.warn('Enregistrement en image', err); return buildPdf(true); } throw err; }
+
+  async function drawAnnots(page, p) {
     const { R } = dims(p); page.setRotation(degrees(R));
     const M = mapper(p), rot = degrees(R);
     for (const a of p.annots) {
@@ -1605,7 +1636,6 @@ async function buildPdf() {
       }
     }
   }
-  return out.save();
 }
 async function download() {
   if (S.editing) stopEditing();
@@ -1617,7 +1647,8 @@ async function download() {
     const link = document.createElement('a'); link.href = url; link.download = `${S.fileName || 'document'}-modifié.pdf`;
     document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
-    S.dirty = false; toast('PDF téléchargé');
+    S.dirty = false;
+    toast(buildPdf.rastered ? `PDF téléchargé · ${buildPdf.rastered} page${buildPdf.rastered > 1 ? 's' : ''} du fichier d’origine, abîmée${buildPdf.rastered > 1 ? 's' : ''}, enregistrée${buildPdf.rastered > 1 ? 's' : ''} en image` : 'PDF téléchargé');
   } catch (err) { console.error(err); toast('La création du PDF a échoué : ' + (err.message || err)); }
   finally { busy(false); }
 }

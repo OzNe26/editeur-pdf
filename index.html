@@ -147,6 +147,9 @@ body[data-tool="select"] .ann.whiteout:hover:not(.selected){outline:1px dashed #
 .conv-note{font-size:12.5px;margin:14px 0 0 !important;line-height:1.5}
 .conv-stage{position:fixed;left:-30000px;top:0;background:#fff;color:#000;z-index:-1}
 @media (max-width:600px){.conv-grid{grid-template-columns:1fr 1fr}}
+.pw-card{width:min(420px,100%)}
+.pw-input{width:100%;height:42px;border:1px solid var(--line);border-radius:8px;padding:0 12px;font-size:15px}
+.pw-input:focus{outline:2px solid var(--focus);outline-offset:1px}
 /* modal, toast, busy */
 .modal{position:fixed;inset:0;background:rgba(15,18,24,.5);display:grid;place-items:center;padding:16px;z-index:50}
 .modal[hidden]{display:none}
@@ -281,6 +284,15 @@ body.c1 .lbl2,body.c2 .tool .lbl,body.c3 .brand .lbl{display:none}
 </div>
 <input type="file" id="fileConv" hidden>
 
+<div class="modal" id="pwModal" hidden>
+  <form class="modal-card pw-card" role="dialog" aria-modal="true" aria-labelledby="pwTitle" id="pwForm">
+    <h2 id="pwTitle">PDF protégé</h2>
+    <p id="pwText">Ce PDF demande un mot de passe pour s’ouvrir.</p>
+    <input type="password" id="pwInput" class="pw-input" autocomplete="off" placeholder="Mot de passe">
+    <div class="modal-row"><span class="spacer"></span><button type="button" class="btn" id="pwCancel">Annuler</button><button type="submit" class="btn primary">Ouvrir</button></div>
+  </form>
+</div>
+
 <div class="busy" id="busy" hidden><div><span class="spin"></span><span id="busyText">Chargement…</span></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -381,10 +393,60 @@ function undo() { if (S.editing) stopEditing(); if (!S.history.length) return; S
 function redo() { if (S.editing) stopEditing(); if (!S.future.length) return; S.history.push(snapshot()); restore(S.future.pop()); }
 
 /* ---------- loading ---------- */
+// protected PDFs: ask the password if needed, then remove the protection with qpdf so every tool works
+function isEncrypted(bytes) {
+  const tail = new TextDecoder('latin1').decode(bytes.subarray(Math.max(0, bytes.length - 4096)));
+  if (/\/Encrypt\b/.test(tail)) return true;
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 2_000_000)));
+  return /\/Encrypt\s+\d+\s+\d+\s+R/.test(head) || /trailer[\s\S]{0,400}\/Encrypt\b/.test(head);
+}
+function askPassword(name, wrong) {
+  return new Promise(res => {
+    const m = $('#pwModal'), inp = $('#pwInput');
+    $('#pwText').textContent = wrong ? `Mot de passe incorrect pour « ${name} ». Réessaie.` : `« ${name} » demande un mot de passe pour s’ouvrir.`;
+    inp.value = ''; m.hidden = false; busy(false); setTimeout(() => inp.focus(), 30);
+    const done = v => { m.hidden = true; $('#pwForm').onsubmit = null; $('#pwCancel').onclick = null; res(v); };
+    $('#pwForm').onsubmit = e => { e.preventDefault(); done(inp.value); };
+    $('#pwCancel').onclick = () => done(null);
+  });
+}
+async function qpdfDecrypt(bytes, password) {
+  await loadScript('lib/qpdf/qpdf.js');
+  const factory = window.Module;
+  let out = null;
+  const q = await factory({ locateFile: () => 'lib/qpdf/qpdf.wasm', noInitialRun: true, print: () => { }, printErr: () => { } });
+  q.FS.writeFile('/in.pdf', bytes);
+  const args = ['--decrypt']; if (password) args.push('--password=' + password);
+  try { q.callMain([...args, '/in.pdf', '/out.pdf']); } catch (e) { /* qpdf exits with a status */ }
+  try { out = q.FS.readFile('/out.pdf'); } catch (e) { out = null; }
+  return out && out.length ? new Uint8Array(out) : null;
+}
 async function addPdfBytes(bytes, name, replace) {
+  let openPw = '';
+  if (isEncrypted(bytes)) {
+    busy(true, `Déverrouillage de « ${name} »…`);
+    let pw = '', wrong = false, plain = null;
+    for (; ;) {
+      try {
+        await pdfjsLib.getDocument({ data: bytes.slice(), password: pw }).promise.then(d => d.destroy());
+        plain = await qpdfDecrypt(bytes, pw);
+        break;
+      } catch (err) {
+        if (err && err.name === 'PasswordException') {
+          pw = await askPassword(name, wrong); wrong = true;
+          if (pw === null) return false;
+          busy(true, `Déverrouillage de « ${name} »…`);
+          continue;
+        }
+        break;
+      }
+    }
+    if (plain) bytes = plain;
+    else { openPw = pw || ''; toast(`Impossible de retirer la protection de « ${name} » : certaines fonctions pourront mal marcher.`); }
+  }
   let doc;
   try {
-    doc = await pdfjsLib.getDocument({ data: bytes.slice(), cMapUrl: 'lib/cmaps/', cMapPacked: true, standardFontDataUrl: 'lib/standard_fonts/', fontExtraProperties: true }).promise;
+    doc = await pdfjsLib.getDocument({ data: bytes.slice(), cMapUrl: 'lib/cmaps/', cMapPacked: true, standardFontDataUrl: 'lib/standard_fonts/', fontExtraProperties: true, password: openPw }).promise;
   } catch (err) {
     toast(err && err.name === 'PasswordException' ? `« ${name} » est protégé par un mot de passe : retire la protection puis réessaie.` : `Impossible de lire « ${name} ». Le fichier est peut-être abîmé.`);
     return false;

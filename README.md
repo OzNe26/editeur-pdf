@@ -11,4 +11,6 @@
 
 Bibliothèques incluses dans `lib/` : [PDF.js](https://mozilla.github.io/pdf.js/) 3.11.174 (Apache 2.0) et [pdf-lib](https://pdf-lib.js.org/) 1.17.1 (MIT).
 
+Déverrouillage des PDF protégés : [qpdf](https://github.com/qpdf/qpdf) compilé en WebAssembly ([qpdf-wasm](https://www.npmjs.com/package/@neslinesli93/qpdf-wasm)), dans `lib/qpdf/`.
+
 Conversions : [docx-preview](https://github.com/VolodymyrBaydalka/docxjs), [SheetJS](https://sheetjs.com/), [html2canvas](https://html2canvas.hertzen.com/), [JSZip](https://stuk.github.io/jszip/), [docx](https://docx.js.org/) (dans `lib/`) et [pptx-preview](https://www.npmjs.com/package/pptx-preview) chargé depuis jsDelivr.

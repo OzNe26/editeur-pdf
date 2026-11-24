@@ -742,18 +742,19 @@ function startEditing(id, isNew, selectAll) {
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
   n.addEventListener('input', () => { a.text = readText(n); });
   if (a.pf) ensureFont(a.font, a.bold);
-  n.addEventListener('blur', () => stopEditing());
+  n.addEventListener('blur', ev => { if (ev.relatedTarget && optbar.contains(ev.relatedTarget)) return; stopEditing(); });
   n.addEventListener('paste', ev => { ev.preventDefault(); document.execCommand('insertText', false, (ev.clipboardData || window.clipboardData).getData('text/plain')); });
   n.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); n.blur(); } });
   renderOptions();
 }
+const lookKey = a => [a.font, a.size, a.color, !!a.bold, a.pf || ''].join('|');
 const readText = n => (n.innerText || '').replace(/ /g, ' ').replace(/\r/g, '').replace(/\n$/, '');
 function stopEditing() {
   const id = S.editing; if (!id) return; S.editing = null;
   const { p, a } = locate(id); if (!a) return;
   const n = overlayOf(p.id)?.querySelector(`.ann[data-id="${id}"]`);
   if (n) a.text = readText(n);
-  if (a.cover && a.text === a.orig) { p.annots = p.annots.filter(x => x !== a && x.id !== a.cover); if (S.selected === id) S.selected = null; }
+  if (a.cover && a.text === a.orig && a.look === lookKey(a)) { p.annots = p.annots.filter(x => x !== a && x.id !== a.cover); if (S.selected === id) S.selected = null; }
   else if (!a.text.trim()) { p.annots = p.annots.filter(x => x !== a); if (S.selected === id) S.selected = null; }
   else if (a.pf) { const miss = missingInPf(a); if (miss.length) toast(`« ${miss.slice(0, 6).join(' ')} » n’existe pas dans la police du PDF : ce texte utilise ${FONTS[a.font].label}.`); }
   renderOverlay(p); renderOptions();
@@ -827,6 +828,12 @@ function applyOpt(fn) {
   renderOptions();
 }
 optbar.addEventListener('pointerdown', e => { if (S.editing && e.target.closest('button')) e.preventDefault(); });
+optbar.addEventListener('focusout', e => {
+  if (!S.editing) return;
+  const to = e.relatedTarget;
+  if (to && (optbar.contains(to) || (to.classList && to.classList.contains('editing')))) return;
+  setTimeout(() => { const n = document.querySelector('.ann.editing'); if (S.editing && document.activeElement !== n && !optbar.contains(document.activeElement)) stopEditing(); }, 0);
+});
 optbar.addEventListener('click', e => {
   const c = e.target.closest('[data-color]'), hl = e.target.closest('[data-hl]');
   if (c) { S.color = c.dataset.color; applyOpt(a => { if (a.type !== 'highlight' && a.type !== 'whiteout' && a.type !== 'image') a.color = S.color; }); }
@@ -843,7 +850,7 @@ optbar.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'optFont') {
     if (t.value === '__pf') applyOpt(a => { if (a.type === 'text') a.pf = a.pfOrig; });
-    else { S.font = t.value; applyOpt(a => { if (a.type === 'text') { a.font = S.font; a.pf = null; } }); }
+    else { S.font = t.value; applyOpt(a => { if (a.type === 'text') { a.font = S.font; a.pf = null; a.hscale = 1; } }); }
   }
   if (t.id === 'optSize') { S.size = +t.value; applyOpt(a => { if (a.type === 'text') a.size = S.size; }); }
   if (t.id === 'optStroke') { S.stroke = +t.value; applyOpt(a => { if (a.stroke) a.stroke = S.stroke; }); }
@@ -898,21 +905,29 @@ function hitBox(boxes, pt) {
 }
 function sampleColors(p, b) {
   const c = sheetOf(p.id)?.querySelector('canvas'); if (!c || !c.width) return null;
-  const k = c.width / dims(p).W;
-  const x0 = Math.max(0, Math.floor(b.x * k)), y0 = Math.max(0, Math.floor(b.y * k));
-  const x1 = Math.min(c.width, Math.ceil((b.x + b.w) * k)), y1 = Math.min(c.height, Math.ceil((b.y + b.h) * k));
-  const W = x1 - x0, H = y1 - y0; if (W < 3 || H < 3) return null;
-  let d; try { d = c.getContext('2d').getImageData(x0, y0, W, H).data; } catch (e) { return null; }
+  const k = c.width / dims(p).W, e = Math.max(3, b.size * .35); // ring around the text, outside the glyphs
+  const X0 = Math.max(0, Math.floor((b.x - e) * k)), Y0 = Math.max(0, Math.floor((b.y - e) * k));
+  const X1 = Math.min(c.width, Math.ceil((b.x + b.w + e) * k)), Y1 = Math.min(c.height, Math.ceil((b.y + b.h + e) * k));
+  const W = X1 - X0, H = Y1 - Y0; if (W < 4 || H < 4) return null;
+  let d; try { d = c.getContext('2d', { willReadFrequently: true }).getImageData(X0, Y0, W, H).data; } catch (err) { return null; }
+  const ix0 = Math.floor((b.x - 1) * k) - X0, iy0 = Math.floor((b.y - 1) * k) - Y0, ix1 = Math.ceil((b.x + b.w + 1) * k) - X0, iy1 = Math.ceil((b.y + b.h + 1) * k) - Y0;
+  const inside = (x, y) => x >= ix0 && x < ix1 && y >= iy0 && y < iy1;
   const counts = new Map();
-  const add = i => { const key = (d[i] >> 3) + ',' + (d[i + 1] >> 3) + ',' + (d[i + 2] >> 3); const v = counts.get(key) || [0, 0, 0, 0]; v[0]++; v[1] += d[i]; v[2] += d[i + 1]; v[3] += d[i + 2]; counts.set(key, v); };
-  for (let x = 0; x < W; x++) { add(x * 4); add(((H - 1) * W + x) * 4); }
-  for (let y = 0; y < H; y++) { add(y * W * 4); add((y * W + W - 1) * 4); }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (inside(x, y)) continue;
+    const i = (y * W + x) * 4; if (d[i + 3] < 200) continue;
+    const key = (d[i] >> 3) + ',' + (d[i + 1] >> 3) + ',' + (d[i + 2] >> 3); const v = counts.get(key) || [0, 0, 0, 0];
+    v[0]++; v[1] += d[i]; v[2] += d[i + 1]; v[3] += d[i + 2]; counts.set(key, v);
+  }
   let best = null; for (const v of counts.values()) if (!best || v[0] > best[0]) best = v;
-  const bg = [best[1] / best[0], best[2] / best[0], best[3] / best[0]];
+  const bg = best ? [best[1] / best[0], best[2] / best[0], best[3] / best[0]] : [255, 255, 255];
   const dist = i => Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]);
-  let maxd = 0; for (let i = 0; i < d.length; i += 4) maxd = Math.max(maxd, dist(i));
+  let maxd = 0;
+  for (let y = Math.max(0, iy0); y < Math.min(H, iy1); y++) for (let x = Math.max(0, ix0); x < Math.min(W, ix1); x++) maxd = Math.max(maxd, dist((y * W + x) * 4));
   let n = 0, r = 0, g = 0, bl = 0;
-  for (let i = 0; i < d.length; i += 4) if (dist(i) >= maxd * .82) { n++; r += d[i]; g += d[i + 1]; bl += d[i + 2]; }
+  for (let y = Math.max(0, iy0); y < Math.min(H, iy1); y++) for (let x = Math.max(0, ix0); x < Math.min(W, ix1); x++) {
+    const i = (y * W + x) * 4; if (dist(i) >= maxd * .82) { n++; r += d[i]; g += d[i + 1]; bl += d[i + 2]; }
+  }
   const hex = v => '#' + v.map(x => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
   return { bg: hex(bg), fg: n && maxd > 60 ? hex([r / n, g / n, bl / n]) : '#111111' };
 }
@@ -974,6 +989,7 @@ async function replaceText(p, pt) {
   const pad = Math.max(1, b.size * .12);
   const wo = { id: uid(), type: 'whiteout', x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2, fill: col.bg };
   const ta = { id: uid(), type: 'text', x: b.x, y: b.base - REF * size, text: b.str, orig: b.str, cover: wo.id, size, color: col.fg, font, bold, hscale, pf: pfId, pfOrig: pfId };
+  ta.look = lookKey(ta);
   p.annots.push(wo, ta);
   S.color = col.fg; S.bold = bold; S.font = font; S.size = size;
   pagesEl.querySelectorAll('.hover-box').forEach(h => h.style.display = 'none');
